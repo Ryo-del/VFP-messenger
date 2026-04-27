@@ -3,7 +3,6 @@ package main
 import (
 	"database/sql"
 	"errors"
-	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
@@ -67,116 +66,17 @@ func (s *server) routes() http.Handler {
 	return CROSHeadersMiddleware(Middleware(mux))
 }
 
-type dbConfig struct {
-	Host     string
-	Port     string
-	User     string
-	Password string
-	Name     string
-	SSLMode  string
-	Source   string
-}
-
-func loadDBConfig() dbConfig {
-	cfg := dbConfig{
-		Host:     viper.GetString("database.host"),
-		Port:     viper.GetString("database.port"),
-		User:     viper.GetString("database.user"),
-		Password: viper.GetString("database.password"),
-		Name:     viper.GetString("database.name"),
-		SSLMode:  viper.GetString("database.sslmode"),
-		Source:   "config/defaults",
-	}
-
-	if value := os.Getenv("PGHOST"); value != "" {
-		cfg.Host = value
-		cfg.Source = "railway pg env"
-	}
-	if value := os.Getenv("PGPORT"); value != "" {
-		cfg.Port = value
-		cfg.Source = "railway pg env"
-	}
-	if value := os.Getenv("PGUSER"); value != "" {
-		cfg.User = value
-		cfg.Source = "railway pg env"
-	}
-	if value := os.Getenv("PGPASSWORD"); value != "" {
-		cfg.Password = value
-		cfg.Source = "railway pg env"
-	}
-	if value := os.Getenv("PGDATABASE"); value != "" {
-		cfg.Name = value
-		cfg.Source = "railway pg env"
-	}
-	if value := os.Getenv("PGSSLMODE"); value != "" {
-		cfg.SSLMode = value
-		cfg.Source = "railway pg env"
-	}
-
-	if cfg.SSLMode == "" {
-		cfg.SSLMode = "disable"
-	}
-
-	if cfg.Source == "config/defaults" {
-		if os.Getenv("DATABASE_HOST") != "" ||
-			os.Getenv("DATABASE_PORT") != "" ||
-			os.Getenv("DATABASE_USER") != "" ||
-			os.Getenv("DATABASE_PASSWORD") != "" ||
-			os.Getenv("DATABASE_NAME") != "" ||
-			os.Getenv("DATABASE_SSLMODE") != "" {
-			cfg.Source = "database env"
-		}
-	}
-
-	return cfg
-}
-
-func validateDBConfig(cfg dbConfig) error {
-	missing := make([]string, 0, 5)
-	if cfg.Host == "" {
-		missing = append(missing, "DATABASE_HOST")
-	}
-	if cfg.Port == "" {
-		missing = append(missing, "DATABASE_PORT")
-	}
-	if cfg.User == "" {
-		missing = append(missing, "DATABASE_USER")
-	}
-	if cfg.Name == "" {
-		missing = append(missing, "DATABASE_NAME")
-	}
-
-	if len(missing) > 0 {
-		return fmt.Errorf("missing required database config: %s", strings.Join(missing, ", "))
-	}
-
-	return nil
-}
-
 func initDB() *sql.DB {
 	slog.Info("initializing database connection")
 
-	cfg := loadDBConfig()
-	if err := validateDBConfig(cfg); err != nil {
-		log.Fatal(err)
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		log.Fatal("DATABASE_URL not set")
 	}
 
-	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-		cfg.Host,
-		cfg.Port,
-		cfg.User,
-		cfg.Password,
-		cfg.Name,
-		cfg.SSLMode,
-	)
-
 	slog.Info("database connection settings resolved",
-		"source", cfg.Source,
-		"host", cfg.Host,
-		"port", cfg.Port,
-		"user", cfg.User,
-		"name", cfg.Name,
-		"sslmode", cfg.SSLMode,
+		"source", "DATABASE_URL",
+		"database_url_present", true,
 	)
 
 	db, err := sql.Open("postgres", dsn)
@@ -198,24 +98,12 @@ func main() {
 	slog.Info("application boot started")
 
 	viper.SetDefault("server.port", "8080")
-	viper.SetDefault("database.host", "localhost")
-	viper.SetDefault("database.port", "5432")
-	viper.SetDefault("database.user", "postgres")
-	viper.SetDefault("database.password", "password")
-	viper.SetDefault("database.name", "postgres")
-	viper.SetDefault("database.sslmode", "disable")
 
 	viper.SetConfigFile("config/config.yaml")
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	viper.AutomaticEnv()
 	mustBindEnv("server.port", "SERVER_PORT")
 	mustBindEnv("server.port", "PORT")
-	mustBindEnv("database.host", "DATABASE_HOST")
-	mustBindEnv("database.port", "DATABASE_PORT")
-	mustBindEnv("database.user", "DATABASE_USER")
-	mustBindEnv("database.password", "DATABASE_PASSWORD")
-	mustBindEnv("database.name", "DATABASE_NAME")
-	mustBindEnv("database.sslmode", "DATABASE_SSLMODE")
 	slog.Info("viper configured", "config_file", "config/config.yaml")
 	if err := viper.ReadInConfig(); err != nil {
 		var configFileNotFoundError viper.ConfigFileNotFoundError
