@@ -74,6 +74,7 @@ type dbConfig struct {
 	Password string
 	Name     string
 	SSLMode  string
+	Source   string
 }
 
 func loadDBConfig() dbConfig {
@@ -84,10 +85,47 @@ func loadDBConfig() dbConfig {
 		Password: viper.GetString("database.password"),
 		Name:     viper.GetString("database.name"),
 		SSLMode:  viper.GetString("database.sslmode"),
+		Source:   "config/defaults",
+	}
+
+	if value := os.Getenv("PGHOST"); value != "" {
+		cfg.Host = value
+		cfg.Source = "railway pg env"
+	}
+	if value := os.Getenv("PGPORT"); value != "" {
+		cfg.Port = value
+		cfg.Source = "railway pg env"
+	}
+	if value := os.Getenv("PGUSER"); value != "" {
+		cfg.User = value
+		cfg.Source = "railway pg env"
+	}
+	if value := os.Getenv("PGPASSWORD"); value != "" {
+		cfg.Password = value
+		cfg.Source = "railway pg env"
+	}
+	if value := os.Getenv("PGDATABASE"); value != "" {
+		cfg.Name = value
+		cfg.Source = "railway pg env"
+	}
+	if value := os.Getenv("PGSSLMODE"); value != "" {
+		cfg.SSLMode = value
+		cfg.Source = "railway pg env"
 	}
 
 	if cfg.SSLMode == "" {
 		cfg.SSLMode = "disable"
+	}
+
+	if cfg.Source == "config/defaults" {
+		if os.Getenv("DATABASE_HOST") != "" ||
+			os.Getenv("DATABASE_PORT") != "" ||
+			os.Getenv("DATABASE_USER") != "" ||
+			os.Getenv("DATABASE_PASSWORD") != "" ||
+			os.Getenv("DATABASE_NAME") != "" ||
+			os.Getenv("DATABASE_SSLMODE") != "" {
+			cfg.Source = "database env"
+		}
 	}
 
 	return cfg
@@ -133,6 +171,7 @@ func initDB() *sql.DB {
 	)
 
 	slog.Info("database connection settings resolved",
+		"source", cfg.Source,
 		"host", cfg.Host,
 		"port", cfg.Port,
 		"user", cfg.User,
@@ -170,6 +209,7 @@ func main() {
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	viper.AutomaticEnv()
 	mustBindEnv("server.port", "SERVER_PORT")
+	mustBindEnv("server.port", "PORT")
 	mustBindEnv("database.host", "DATABASE_HOST")
 	mustBindEnv("database.port", "DATABASE_PORT")
 	mustBindEnv("database.user", "DATABASE_USER")
