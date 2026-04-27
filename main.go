@@ -47,13 +47,17 @@ func (s *server) routes() http.Handler {
 }
 
 func initDB() *sql.DB {
-	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		viper.GetString("database.host"),
-		viper.GetString("database.port"),
-		viper.GetString("database.user"),
-		viper.GetString("database.password"),
-		viper.GetString("database.name"),
-	)
+	dsn := viper.GetString("database.url")
+	if dsn == "" {
+		dsn = fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+			viper.GetString("database.host"),
+			viper.GetString("database.port"),
+			viper.GetString("database.user"),
+			viper.GetString("database.password"),
+			viper.GetString("database.name"),
+		)
+	}
+
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
 		log.Fatalf("Error connecting to database: %v", err)
