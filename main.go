@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -66,28 +67,77 @@ func (s *server) routes() http.Handler {
 	return CROSHeadersMiddleware(Middleware(mux))
 }
 
+type dbConfig struct {
+	Host     string
+	Port     string
+	User     string
+	Password string
+	Name     string
+	SSLMode  string
+}
+
+func loadDBConfig() dbConfig {
+	cfg := dbConfig{
+		Host:     viper.GetString("database.host"),
+		Port:     viper.GetString("database.port"),
+		User:     viper.GetString("database.user"),
+		Password: viper.GetString("database.password"),
+		Name:     viper.GetString("database.name"),
+		SSLMode:  viper.GetString("database.sslmode"),
+	}
+
+	if cfg.SSLMode == "" {
+		cfg.SSLMode = "disable"
+	}
+
+	return cfg
+}
+
+func validateDBConfig(cfg dbConfig) error {
+	missing := make([]string, 0, 5)
+	if cfg.Host == "" {
+		missing = append(missing, "DATABASE_HOST")
+	}
+	if cfg.Port == "" {
+		missing = append(missing, "DATABASE_PORT")
+	}
+	if cfg.User == "" {
+		missing = append(missing, "DATABASE_USER")
+	}
+	if cfg.Name == "" {
+		missing = append(missing, "DATABASE_NAME")
+	}
+
+	if len(missing) > 0 {
+		return fmt.Errorf("missing required database config: %s", strings.Join(missing, ", "))
+	}
+
+	return nil
+}
+
 func initDB() *sql.DB {
 	slog.Info("initializing database connection")
 
-	dsn := viper.GetString("database.url")
-	dsnSource := "database.url"
-	if dsn == "" {
-		dsnSource = "database host/port/user/password/name fields"
-		dsn = fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-			viper.GetString("database.host"),
-			viper.GetString("database.port"),
-			viper.GetString("database.user"),
-			viper.GetString("database.password"),
-			viper.GetString("database.name"),
-		)
+	cfg := loadDBConfig()
+	if err := validateDBConfig(cfg); err != nil {
+		log.Fatal(err)
 	}
 
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		cfg.Host,
+		cfg.Port,
+		cfg.User,
+		cfg.Password,
+		cfg.Name,
+		cfg.SSLMode,
+	)
+
 	slog.Info("database connection settings resolved",
-		"source", dsnSource,
-		"host", viper.GetString("database.host"),
-		"port", viper.GetString("database.port"),
-		"user", viper.GetString("database.user"),
-		"name", viper.GetString("database.name"),
+		"host", cfg.Host,
+		"port", cfg.Port,
+		"user", cfg.User,
+		"name", cfg.Name,
+		"sslmode", cfg.SSLMode,
 	)
 
 	db, err := sql.Open("postgres", dsn)
@@ -108,19 +158,34 @@ func main() {
 	slog.SetDefault(logger)
 	slog.Info("application boot started")
 
+	viper.SetDefault("server.port", "8080")
+	viper.SetDefault("database.host", "localhost")
+	viper.SetDefault("database.port", "5432")
+	viper.SetDefault("database.user", "postgres")
+	viper.SetDefault("database.password", "password")
+	viper.SetDefault("database.name", "postgres")
+	viper.SetDefault("database.sslmode", "disable")
+
 	viper.SetConfigFile("config/config.yaml")
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	viper.AutomaticEnv()
+	mustBindEnv("server.port", "SERVER_PORT")
+	mustBindEnv("database.host", "DATABASE_HOST")
+	mustBindEnv("database.port", "DATABASE_PORT")
+	mustBindEnv("database.user", "DATABASE_USER")
+	mustBindEnv("database.password", "DATABASE_PASSWORD")
+	mustBindEnv("database.name", "DATABASE_NAME")
+	mustBindEnv("database.sslmode", "DATABASE_SSLMODE")
 	slog.Info("viper configured", "config_file", "config/config.yaml")
 	if err := viper.ReadInConfig(); err != nil {
-		log.Fatalf("Error reading config file: %v", err)
-	}
-	slog.Info("config loaded successfully")
-
-	if viper.IsSet("database.url") {
-		slog.Info("database.url is configured")
+		var configFileNotFoundError viper.ConfigFileNotFoundError
+		if errors.As(err, &configFileNotFoundError) {
+			slog.Warn("config file not found, using env/default values", "config_file", "config/config.yaml")
+		} else {
+			log.Fatalf("Error reading config file: %v", err)
+		}
 	} else {
-		slog.Warn("database.url is not configured, fallback fields will be used")
+		slog.Info("config loaded successfully")
 	}
 
 	db := initDB()
@@ -141,4 +206,10 @@ func main() {
 
 	slog.Info("Starting server on " + port)
 	log.Fatal(http.ListenAndServe(port, srv.routes()))
+}
+
+func mustBindEnv(key, envKey string) {
+	if err := viper.BindEnv(key, envKey); err != nil {
+		log.Fatalf("Error binding env %s to %s: %v", envKey, key, err)
+	}
 }
