@@ -6,6 +6,7 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"strings"
 	"vfp/handler"
 	"vfp/repo"
 
@@ -65,6 +66,7 @@ func initDB() *sql.DB {
 func main() {
 
 	viper.SetConfigFile("config/config.yaml")
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	viper.AutomaticEnv()
 	if err := viper.ReadInConfig(); err != nil {
 		log.Fatalf("Error reading config file: %v", err)
