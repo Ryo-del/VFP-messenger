@@ -1,8 +1,8 @@
 package main
 
 import (
+	"bufio"
 	"database/sql"
-	"errors"
 	"log"
 	"log/slog"
 	"net/http"
@@ -13,7 +13,6 @@ import (
 	"vfp/repo"
 
 	_ "github.com/lib/pq"
-	"github.com/spf13/viper"
 )
 
 type server struct {
@@ -88,6 +87,7 @@ func initDB() *sql.DB {
 		log.Fatalf("Error pinging database: %v", err)
 	}
 	slog.Info("database ping successful")
+	ensureMessagesTable(db)
 	return db
 }
 func main() {
@@ -97,24 +97,7 @@ func main() {
 	slog.SetDefault(logger)
 	slog.Info("application boot started")
 
-	viper.SetDefault("server.port", "8080")
-
-	viper.SetConfigFile("config/config.yaml")
-	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	viper.AutomaticEnv()
-	mustBindEnv("server.port", "SERVER_PORT")
-	mustBindEnv("server.port", "PORT")
-	slog.Info("viper configured", "config_file", "config/config.yaml")
-	if err := viper.ReadInConfig(); err != nil {
-		var configFileNotFoundError viper.ConfigFileNotFoundError
-		if errors.As(err, &configFileNotFoundError) {
-			slog.Warn("config file not found, using env/default values", "config_file", "config/config.yaml")
-		} else {
-			log.Fatalf("Error reading config file: %v", err)
-		}
-	} else {
-		slog.Info("config loaded successfully")
-	}
+	loadDotEnv(".env")
 
 	db := initDB()
 	defer db.Close()
@@ -129,15 +112,81 @@ func main() {
 	}
 	slog.Info("server struct initialized")
 
-	port := ":" + viper.GetString("server.port")
+	port := ":" + serverPort()
 	slog.Info("server port resolved", "port", port)
 
 	slog.Info("Starting server on " + port)
 	log.Fatal(http.ListenAndServe(port, srv.routes()))
 }
 
-func mustBindEnv(key, envKey string) {
-	if err := viper.BindEnv(key, envKey); err != nil {
-		log.Fatalf("Error binding env %s to %s: %v", envKey, key, err)
+func serverPort() string {
+	if port := os.Getenv("SERVER_PORT"); port != "" {
+		return port
 	}
+	if port := os.Getenv("PORT"); port != "" {
+		return port
+	}
+	return "8080"
+}
+
+func loadDotEnv(path string) {
+	file, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			slog.Debug(".env file not found")
+			return
+		}
+		log.Fatalf("Error opening .env file: %v", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+
+		key = strings.TrimSpace(key)
+		value = strings.Trim(strings.TrimSpace(value), `"'`)
+		if key == "" || os.Getenv(key) != "" {
+			continue
+		}
+
+		if err := os.Setenv(key, value); err != nil {
+			log.Fatalf("Error setting env %s: %v", key, err)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		log.Fatalf("Error reading .env file: %v", err)
+	}
+}
+
+func ensureMessagesTable(db *sql.DB) {
+	queries := []string{
+		`CREATE TABLE IF NOT EXISTS messages (
+			id BIGSERIAL PRIMARY KEY,
+			username TEXT NOT NULL,
+			message TEXT NOT NULL
+		)`,
+		`CREATE SEQUENCE IF NOT EXISTS messages_id_seq OWNED BY messages.id`,
+		`SELECT setval('messages_id_seq', COALESCE((SELECT MAX(id) FROM messages), 0) + 1, false)`,
+		`ALTER TABLE messages ALTER COLUMN id SET DEFAULT nextval('messages_id_seq')`,
+		`ALTER TABLE messages ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ`,
+		`UPDATE messages SET created_at = NOW() WHERE created_at IS NULL`,
+		`ALTER TABLE messages ALTER COLUMN created_at SET DEFAULT NOW()`,
+		`ALTER TABLE messages ALTER COLUMN created_at SET NOT NULL`,
+	}
+
+	for _, query := range queries {
+		if _, err := db.Exec(query); err != nil {
+			log.Fatalf("Error ensuring messages table: %v", err)
+		}
+	}
+	slog.Info("messages table ready")
 }

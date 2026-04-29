@@ -36,6 +36,10 @@ func (r *Repository) GetMessage(ctx context.Context) (string, string, error) {
 	var Message string
 	err := r.db.QueryRowContext(ctx, query).Scan(&Username, &Message)
 	if err != nil {
+		if err == sql.ErrNoRows {
+			slog.Info("GetMessage query completed without rows")
+			return "", "", err
+		}
 		slog.Error("GetMessage query failed", "error", err)
 		return "", "", err
 	}

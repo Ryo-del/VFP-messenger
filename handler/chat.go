@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"database/sql"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -86,6 +87,11 @@ func (h *Handler) GetMessageHandler(w http.ResponseWriter, r *http.Request) {
 
 	user, message, err := h.Repo.GetMessage(r.Context())
 	if err != nil {
+		if err == sql.ErrNoRows {
+			slog.Info("no messages found")
+			http.Error(w, "No messages found", http.StatusNotFound)
+			return
+		}
 		slog.Error("failed to retrieve message", "error", err)
 		http.Error(w, "Failed to retrieve message", http.StatusInternalServerError)
 		return
